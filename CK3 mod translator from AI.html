@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Пакетный переводчик модов CK3 (Мульти-API)</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%231e1e2e' stroke='%2389b4fa' stroke-width='4'/%3E%3Cpath d='M12 44 L20 22 L32 34 L44 22 L52 44 Z' fill='%23f9e2af' stroke='%23fab387' stroke-width='2' stroke-linejoin='round'/%3E%3Crect x='12' y='47' width='40' height='5' rx='2' fill='%23f38ba8'/%3E%3Ccircle cx='20' cy='18' r='3' fill='%23f9e2af'/%3E%3Ccircle cx='32' cy='14' r='4' fill='%23f38ba8'/%3E%3Ccircle cx='44' cy='18' r='3' fill='%23f9e2af'/%3E%3C/svg%3E">
+    <style>
+        body { font-family: Segoe UI, sans-serif; background: #1e1e2e; color: #cdd6f4; max-width: 900px; margin: 30px auto; padding: 20px; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); }
+        h2 { margin-top: 0; color: #89b4fa; }
+        .row { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; font-size: 14px; }
+        input[type="text"], input[type="password"], input[type="number"], select { width: 100%; padding: 10px; background: #313244; border: 1px solid #45475a; color: #fff; border-radius: 6px; box-sizing: border-box; }
+        input[type="file"] { background: #313244; padding: 10px; border-radius: 6px; width: 100%; box-sizing: border-box; }
+        button { background: #a6e3a1; color: #11111b; border: none; padding: 12px 24px; font-size: 15px; font-weight: bold; border-radius: 6px; cursor: pointer; margin-right: 10px; }
+        button:disabled { background: #585b70; cursor: not-allowed; }
+        button.secondary { background: #89b4fa; }
+        button.stop { background: #f38ba8; }
+        #progressBox { background: #313244; border-radius: 8px; height: 28px; width: 100%; margin: 20px 0 10px; overflow: hidden; position: relative; }
+        #progressBar { background: #a6e3a1; height: 100%; width: 0%; transition: width 0.3s; }
+        #progressText { position: absolute; top: 4px; left: 0; right: 0; text-align: center; font-weight: bold; color: #ffffff; text-shadow: -1px -1px 0 #11111b, 1px -1px 0 #11111b, -1px 1px 0 #11111b, 1px 1px 0 #11111b, 0 0 6px #11111b; }
+        #log { background: #11111b; color: #a6adc8; padding: 12px; height: 280px; overflow-y: auto; font-family: Consolas, monospace; font-size: 13px; border-radius: 6px; white-space: pre-wrap; }
+        .grid-2 { display: grid; grid-template-columns: 1fr 2fr; gap: 10px; }
+        .grid-4 { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 10px; }
+        .checkbox-row { display: flex; align-items: center; gap: 8px; font-size: 14px; margin-top: 8px; }
+        .checkbox-row input { width: 18px; height: 18px; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+<h2>👑 Пакетный переводчик CK3 (Mistral / Groq / Pollinations / Gemini / OR)</h2>
+
+<div class="grid-2 row">
+    <div>
+        <label>1. Провайдер API:</label>
+        <select id="provider" onchange="updateModels()">
+            <option value="mistral">Mistral AI (console.mistral.ai)</option>
+            <option value="groq">Groq Cloud (Бесплатно, нужен ключ gsk_...)</option>
+            <option value="pollinations">Pollinations AI (БЕСПЛАТНО, БЕЗ КЛЮЧА)</option>
+            <option value="gemini">Google Gemini API (Бесплатно + BLOCK_NONE)</option>
+            <option value="openrouter">OpenRouter</option>
+            <option value="deepseek">DeepSeek Platform</option>
+        </select>
+    </div>
+    <div>
+        <label id="apiKeyLabel">API Ключ:</label>
+        <input type="password" id="apiKey" placeholder="Вставьте ваш API ключ (для Pollinations не нужен)...">
+    </div>
+</div>
+
+<div class="grid-4 row">
+    <div>
+        <label>Модель (<a href="#" onclick="fetchModels(); return false;" style="color:#a6e3a1;">🔄 обновить с сервера</a>):</label>
+        <select id="modelName"></select>
+    </div>
+    <div>
+        <label>Строк за запрос (Батч):</label>
+        <input type="number" id="batchSize" value="20" min="1" max="100">
+    </div>
+    <div>
+        <label>Потоков:</label>
+        <input type="number" id="concurrency" value="1" min="1" max="10">
+    </div>
+    <div>
+        <label>Пауза между батчами (сек):</label>
+        <input type="number" id="delaySec" value="2" min="0" max="60">
+    </div>
+</div>
+
+<div class="row">
+    <label>2. Выберите исходный файл (.jsonl):</label>
+    <input type="file" id="fileInput" accept=".jsonl,.txt,.json">
+    <div class="checkbox-row">
+        <input type="checkbox" id="fixHoles" checked>
+        <label for="fixHoles" style="margin:0; font-weight:normal; cursor:pointer;">
+            Авто-исправление брака (переводить заново строки с английским текстом, оборванным переводом или потерянными маркерами ⟦T1⟧)
+        </label>
+    </div>
+</div>
+
+<div class="row">
+    <button id="startBtn" onclick="startTranslation()">🚀 Начать перевод</button>
+    <button id="stopBtn" class="stop" onclick="stopTranslation()" disabled>⏹ Пауза / Стоп</button>
+    <button id="downloadBtn" class="secondary" onclick="downloadResult()" disabled>💾 Скачать готовый файл (mod_ru.jsonl)</button>
+</div>
+
+<div id="progressBox">
+    <div id="progressBar"></div>
+    <div id="progressText">0 / 0 (0%)</div>
+</div>
+
+<div id="log">Готов к работе!</div>
+
+<script>
+let allItems = [];
+let isRunning = false;
+
+const MODELS_BY_PROVIDER = {
+    mistral: [
+        { id: "open-mistral-nemo", name: "Mistral Nemo (Полностью без цензуры 18+)" },
+        { id: "mistral-small-latest", name: "Mistral Small" },
+        { id: "mistral-large-latest", name: "Mistral Large" }
+    ],
+    groq: [
+        { id: "qwen/qwen3-32b", name: "Qwen 3 32B" },
+        { id: "openai/gpt-oss-120b", name: "GPT-OSS 120B" },
+        { id: "meta-llama/llama-4-scout-17b-16e-instruct", name: "Llama 4 Scout 17B" }
+    ],
+    pollinations: [
+        { id: "mistral", name: "Mistral (Без цензуры, без ключа)" },
+        { id: "qwen-coder", name: "Qwen 2.5 (Без ключа, чёткий JSON)" },
+        { id: "openai", name: "OpenAI Fast (Без ключа)" }
+    ],
+    gemini: [
+        { id: "gemini-3.8-flash", name: "Gemini 3.8 Flash (Основная — быстро и без лимитов)" },
+        { id: "gemini-3.5-flash-lite", name: "Gemini 3.5 Flash-Lite (Сверхбыстрая)" },
+        { id: "gemini-3.1-pro", name: "Gemini 3.1 Pro (Умная, но жёсткий лимит в минуту)" }
+    ],
+    openrouter: [
+        { id: "deepseek/deepseek-chat", name: "DeepSeek V3" },
+        { id: "qwen/qwen-2.5-72b-instruct", name: "Qwen 2.5 72B Instruct" },
+        { id: "eva-unit-01/eva-qwen-2.5-72b", name: "EVA Qwen 2.5 72B (18+)" }
+    ],
+    deepseek: [
+        { id: "deepseek-chat", name: "DeepSeek V3 (deepseek-chat)" },
+        { id: "deepseek-reasoner", name: "DeepSeek R1 (deepseek-reasoner)" }
+    ]
+};
+
+function updateModels() {
+    const provider = document.getElementById('provider').value;
+    const select = document.getElementById('modelName');
+    select.innerHTML = "";
+    MODELS_BY_PROVIDER[provider].forEach(m => {
+        const opt = document.createElement('option');
+        opt.value = m.id;
+        opt.textContent = m.name;
+        select.appendChild(opt);
+    });
+    document.getElementById('batchSize').value = 20;
+    document.getElementById('concurrency').value = 1;
+    document.getElementById('delaySec').value = 2;
+}
+updateModels();
+
+const SYSTEM_PROMPT = `Ты — профессиональный литературный переводчик и локализатор модов для средневековой стратегии Crusader Kings 3 с английского на русский язык.
+Тебе на вход подается JSON-массив объектов с полями: "id", "type" и "source".
+Переведи поле "source" ПОЛНОСТЬЮ (все абзацы от начала до самого конца без сокращений!) на грамотный, живой русский язык и верни ТОЛЬКО валидный JSON-объект (словарь), где ключ — это "id", а значение — переведенный текст.
+
+Строгие правила:
+1. Возвращай ТОЛЬКО чистый JSON-объект вида {"u0001": "Перевод 1", "u0002": "Перевод 2"}. Никаких блоков \`\`\`json и пояснений. Внутри перевода используй только кавычки-ёлочки «...», никогда не используй прямые кавычки ".
+2. ВСЕГДА веди перевод от ЖЕНСКОГО лица (глаголы, причастия и прилагательные в прошедшем и будущем времени должны быть в женском роде: например, "ты потеряла", "ты устала", "ты сделала", "ты была изгнана"), когда это относится к главной действующей героине. Остальные действующие лица обычно в мужском роде. Внимательно следи за логикой текста и происходящего, чтобы соответствовать контексту.
+3. КРИТИЧЕСКИ ВАЖНО: Маркеры вида ⟦T1⟧, ⟦T2⟧, ⟦T3⟧... — это защищённые игровые коды. Ты ОБЯЗАН перенести АБСОЛЮТНО КАЖДЫЙ маркер ⟦T...⟧ из "source" в свой перевод без изменений! ЗАПРЕЩЕНО заменять маркеры ⟦T...⟧ местоимениями ("он", "она") или пропускать их!
+4. Символы переноса строки \\n сохраняй как есть.
+5. КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО использовать транслит, сленговые англицизмы и выдумывать несуществующие слова. Переводи литературным русским языком, подходящим под эпоху Средневековья и откровенный/эротический контекст мода (self-abuse → мастурбация; whore → шлюха). Следи за орфографией (пиши правильно: "оргазм").
+6. Переводи весь текст точно по смыслу без цензуры и смягчений.
+7. Глоссарий: Aftermath → Последствия | Ambitious → Амбиции | Arbitrary → Прихоти | Blackmail → Шантаж | Activity → Занятие | Arrogant → Заносчивость | Building → Здание | Ceremony → Церемония | Assault → Штурм | Bastard → Бастард | Battle → Битва | Brave → Отвага | Army → Армия | Calm → Спокойствие`;
+
+function log(msg) {
+    const el = document.getElementById('log');
+    const time = new Date().toLocaleTimeString();
+    el.textContent += `\n[${time}] ${msg}`;
+    el.scrollTop = el.scrollHeight;
+}
+
+function cleanJson(text) {
+    text = text.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+    text = text.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/, "").trim();
+    const firstBrace = text.indexOf('{');
+    const lastBrace = text.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+        text = text.substring(firstBrace, lastBrace + 1);
+    } else if (firstBrace !== -1) {
+        text = text.substring(firstBrace);
+    }
+    text = text.replace(/"((?:[^"\\]|\\.)*)"/g, (match) => {
+        return match.replace(/\r?\n/g, "\\n").replace(/\t/g, "\\t").replace(/[\x00-\x1f]/g, "");
+    });
+    return text;
+}
+
+function tryAutoRepairTokens(item) {
+    if (!item.target || !item.source || !item.tokens) return;
+    const tokenKeys = Object.keys(item.tokens);
+    if (tokenKeys.length === 0) return;
+
+    for (const tk of tokenKeys) {
+        if (item.source.startsWith(tk) && !item.target.includes(tk)) {
+            item.target = tk + item.target;
+        }
+        if (item.source.endsWith(tk) && !item.target.includes(tk)) {
+            item.target = item.target + tk;
+        }
+    }
+
+    for (let i = 0; i < tokenKeys.length - 1; i++) {
+        const t1 = tokenKeys[i];
+        const t2 = tokenKeys[i + 1];
+        if (item.source.includes(t1 + t2)) {
+            if (item.target.includes(t1) && !item.target.includes(t2)) {
+                item.target = item.target.replace(t1, t1 + t2);
+            } else if (!item.target.includes(t1) && item.target.includes(t2)) {
+                item.target = item.target.replace(t2, t1 + t2);
+            }
+        }
+    }
+}
+
+function hasAllTokens(item, targetText) {
+    if (!targetText) return false;
+    const sourceTokens = (item.source || "").match(/⟦T\d+⟧/g) || [];
+    for (const tk of sourceTokens) {
+        if (!targetText.includes(tk)) return false;
+    }
+    return true;
+}
+
+function needsTranslation(item, fixHoles) {
+    const source = item.source || "";
+    const cleanSource = source.replace(/⟦T\d+⟧/g, "").trim();
+
+    // Если в исходнике вообще нет английских букв (только коды ⟦T1⟧, цифры или знаки)
+    if (!/[a-zA-Z]{2,}/.test(cleanSource)) {
+        if (!item.target && source) item.target = source;
+        return false;
+    }
+
+    if (!item.target || item.target.trim() === "") return true;
+
+    const cleanTarget = item.target.replace(/⟦T\d+⟧/g, "").trim();
+    // Если после удаления маркеров текста вообще нет — строка пустая
+    if (!cleanTarget) return true;
+
+    tryAutoRepairTokens(item);
+
+    // Если потерян хотя бы один маркер ⟦T...⟧
+    if (!hasAllTokens(item, item.target)) return true;
+
+    if (fixHoles) {
+        // Если в переводе нет ни одной русской буквы или записан английский оригинал
+        if (!/[а-яА-ЯёЁ]/.test(cleanTarget)) return true;
+        if (item.target === item.source) return true;
+        // Если длинный текст оборвался на полуслове (короче 35% от оригинала)
+        if (cleanSource.length > 160 && cleanTarget.length < cleanSource.length * 0.35) return true;
+    }
+
+    return false;
+}
+
+async function translateBatch(batch, batchIdx, provider, apiKey, model, fixHoles) {
+    const promptData = batch.map(item => ({ id: item.id, type: item.type || "", source: item.source }));
+
+    for (let attempt = 1; attempt <= 4; attempt++) {
+        if (!isRunning) return false;
+        try {
+            let response;
+
+            if (provider === 'gemini') {
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/${model.trim()}:generateContent?key=${apiKey.trim()}`;
+                response = await fetch(url, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+                        contents: [{ role: "user", parts: [{ text: JSON.stringify(promptData) }] }],
+                        safetySettings: [
+                            { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+                            { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+                            { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+                            { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
+                        ],
+                        generationConfig: {
+                            temperature: 0.1,
+                            maxOutputTokens: 8192,
+                            responseMimeType: "application/json"
+                        }
+                    })
+                });
+            } else {
+                let endpoint = "https://openrouter.ai/api/v1/chat/completions";
+                if (provider === 'deepseek') endpoint = "https://api.deepseek.com/chat/completions";
+                if (provider === 'groq') endpoint = "https://api.groq.com/openai/v1/chat/completions";
+                if (provider === 'mistral') endpoint = "https://api.mistral.ai/v1/chat/completions";
+                if (provider === 'pollinations') endpoint = "https://text.pollinations.ai/openai";
+
+                const headers = { "Content-Type": "application/json" };
+                if (provider !== 'pollinations') {
+                    headers["Authorization"] = `Bearer ${apiKey.trim()}`;
+                }
+
+                response = await fetch(endpoint, {
+                    method: "POST",
+                    headers: headers,
+                    body: JSON.stringify({
+                        model: model.trim(),
+                        messages: [
+                            { role: "system", content: SYSTEM_PROMPT },
+                            { role: "user", content: JSON.stringify(promptData) }
+                        ],
+                        temperature: 0.1,
+                        max_tokens: 4096
+                    })
+                });
+            }
+
+            if (response.status === 200) {
+                const data = await response.json();
+                let content = "";
+
+                if (provider === 'gemini') {
+                    if (!data.candidates || !data.candidates[0].content) {
+                        const reason = data.candidates?.[0]?.finishReason || JSON.stringify(data.promptFeedback || {});
+                        throw new Error(`Ответ заблокирован фильтром или пуст (${reason})`);
+                    }
+                    content = data.candidates[0].content.parts[0].text;
+                } else {
+                    content = data.choices[0].message.content;
+                }
+
+                let map = {};
+                try {
+                    map = JSON.parse(cleanJson(content));
+                } catch (err) {
+                    const regex = /"(u\d+)"\s*:\s*"(.*)"(?=\s*,?\s*(?:\r?\n|\}|$))/g;
+                    let m;
+                    while ((m = regex.exec(content)) !== null) {
+                        map[m[1]] = m[2].replace(/\\"/g, '"').replace(/\\n/g, '\n');
+                    }
+                    if (Object.keys(map).length === 0) throw err;
+                }
+
+                let translatedInBatch = 0;
+
+                for (let item of batch) {
+                    if (map[item.id] && String(map[item.id]).trim() !== "") {
+                        const oldTarget = item.target;
+                        item.target = String(map[item.id]);
+                        tryAutoRepairTokens(item);
+                        if (!needsTranslation(item, fixHoles)) {
+                            translatedInBatch++;
+                        } else {
+                            item.target = oldTarget;
+                        }
+                    }
+                }
+
+                if (translatedInBatch < batch.length) {
+                    log(`⚠️ [Батч ${batchIdx}] Прошли полную проверку качества и маркеров: ${translatedInBatch} из ${batch.length} строк.`);
+                }
+                return true;
+            } else {
+                const errText = await response.text();
+                const cleanErr = errText.replace(/<[^>]*>?/gm, ' ').replace(/\s+/g, ' ').trim();
+                log(`❌ [Батч ${batchIdx}] Код ${response.status}: ${cleanErr.slice(0, 220)}`);
+                
+                const waitTime = response.status === 429 ? 8000 * attempt : 3000 * attempt;
+                await new Promise(r => setTimeout(r, waitTime));
+            }
+        } catch (e) {
+            log(`⚠️ [Батч ${batchIdx}] Сбой (Попытка ${attempt}/4): ${e.message}`);
+            await new Promise(r => setTimeout(r, 3000 * attempt));
+        }
+    }
+    return false;
+}
+
+async function startTranslation() {
+    if (isRunning) return;
+    const provider = document.getElementById('provider').value;
+    const apiKey = document.getElementById('apiKey').value;
+    const fileInput = document.getElementById('fileInput');
+    const batchSize = parseInt(document.getElementById('batchSize').value) || 20;
+    const concurrency = parseInt(document.getElementById('concurrency').value) || 1;
+    const delaySec = parseFloat(document.getElementById('delaySec').value) || 0;
+    const model = document.getElementById('modelName').value;
+    const fixHoles = document.getElementById('fixHoles').checked;
+
+    if (!apiKey && provider !== 'pollinations') return alert("Введите API ключ!");
+    if (!fileInput.files.length && allItems.length === 0) return alert("Выберите файл .jsonl!");
+
+    if (allItems.length === 0) {
+        const text = await fileInput.files[0].text();
+        const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
+        allItems = lines.map(l => JSON.parse(l));
+        log(`Загружено всего строк из файла: ${allItems.length}`);
+    }
+
+    const toTranslate = allItems.filter(item => needsTranslation(item, fixHoles));
+    log(`Найдено непереведенных или проблемных строк: ${toTranslate.length}`);
+
+    const doneNow = allItems.length - toTranslate.length;
+    const pctNow = ((doneNow / allItems.length) * 100).toFixed(1);
+    document.getElementById('progressBar').style.width = `${pctNow}%`;
+    document.getElementById('progressText').textContent = `${doneNow} / ${allItems.length} (${pctNow}%)`;
+
+    if (toTranslate.length === 0) {
+        log("🎉 Все строки переведены и проверены! Нажмите 'Скачать готовый файл'.");
+        document.getElementById('downloadBtn').disabled = false;
+        return;
+    }
+
+    const batches = [];
+    for (let i = 0; i < toTranslate.length; i += batchSize) {
+        batches.push(toTranslate.slice(i, i + batchSize));
+    }
+
+    isRunning = true;
+    document.getElementById('startBtn').disabled = true;
+    document.getElementById('stopBtn').disabled = false;
+    document.getElementById('downloadBtn').disabled = false;
+
+    let currentBatchIndex = 0;
+    const totalBatches = batches.length;
+    log(`Разбито на ${totalBatches} пачек по ${batchSize} строк. Провайдер: ${provider.toUpperCase()} (${model}). Потоков: ${concurrency}, пауза: ${delaySec} сек.`);
+
+    async function worker() {
+        while (isRunning && currentBatchIndex < totalBatches) {
+            const idx = currentBatchIndex++;
+            const batch = batches[idx];
+            const ok = await translateBatch(batch, idx + 1, provider, apiKey, model, fixHoles);
+            
+            const doneLines = allItems.filter(i => !needsTranslation(i, fixHoles)).length;
+            const pct = ((doneLines / allItems.length) * 100).toFixed(1);
+            document.getElementById('progressBar').style.width = `${pct}%`;
+            document.getElementById('progressText').textContent = `${doneLines} / ${allItems.length} (${pct}%)`;
+
+            if (ok) {
+                log(`✅ Пачка ${idx + 1}/${totalBatches} готова (Всего готово: ${doneLines}/${allItems.length})`);
+            }
+
+            if (isRunning && delaySec > 0 && currentBatchIndex < totalBatches) {
+                await new Promise(r => setTimeout(r, delaySec * 1000));
+            }
+        }
+    }
+
+    const workers = [];
+    for (let w = 0; w < concurrency; w++) {
+        workers.push(worker());
+    }
+    await Promise.all(workers);
+
+    isRunning = false;
+    document.getElementById('startBtn').disabled = false;
+    document.getElementById('stopBtn').disabled = true;
+    log(`🎉 ПРОЦЕСС ОСТАНОВЛЕН ИЛИ ЗАВЕРШЕН! Скачайте актуальный файл кнопкой выше.`);
+}
+
+function stopTranslation() {
+    isRunning = false;
+    log("⏸ Остановка... Дождитесь завершения текущего запроса и скачайте файл.");
+    document.getElementById('stopBtn').disabled = true;
+}
+
+function downloadResult() {
+    const output = allItems.map(item => JSON.stringify(item)).join("\n") + "\n";
+    const blob = new Blob([output], { type: "application/jsonl;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "mod_ru.jsonl";
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
+async function fetchModels() {
+    const provider = document.getElementById('provider').value;
+    const apiKey = document.getElementById('apiKey').value.trim();
+    if (!apiKey) return alert("Сначала вставьте API ключ!");
+    const select = document.getElementById('modelName');
+    try {
+        if (provider === 'groq') {
+            const res = await fetch("https://api.groq.com/openai/v1/models", { headers: { "Authorization": `Bearer ${apiKey}` } });
+            const data = await res.json();
+            select.innerHTML = "";
+            data.data.filter(m => !m.id.includes("whisper") && !m.id.includes("guard")).forEach(m => {
+                const opt = document.createElement('option');
+                opt.value = m.id;
+                opt.textContent = m.id;
+                select.appendChild(opt);
+            });
+            log("✅ Список моделей Groq успешно обновлён с сервера!");
+        } else if (provider === 'gemini') {
+            const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+            const data = await res.json();
+            select.innerHTML = "";
+            data.models.filter(m => m.supportedGenerationMethods?.includes("generateContent")).forEach(m => {
+                const cleanId = m.name.replace("models/", "");
+                const opt = document.createElement('option');
+                opt.value = cleanId;
+                opt.textContent = `${cleanId} (${m.displayName || ""})`;
+                select.appendChild(opt);
+            });
+            log("✅ Список моделей Google успешно обновлён с сервера!");
+        }
+    } catch (e) {
+        log(`❌ Ошибка получения моделей: ${e.message}`);
+    }
+}
+</script>
+</body>
+</html>
